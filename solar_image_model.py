@@ -235,27 +235,27 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
         train_hist.append(average_loss)
 
         # Validation on test data
-        model.eval()
-        with torch.no_grad():
-            total_test_loss = 0.0
+        # model.eval()
+        # with torch.no_grad():
+        #     total_test_loss = 0.0
 
-            for batch_img_test, batch_num_test, batch_target_test in test_loader:
-                batch_img_test, batch_num_test, batch_target_test = (
-                    batch_img_test.to(device),
-                    batch_num_test.to(device),
-                    batch_target_test.to(device),
-                )
-                predictions_test = model(batch_img_test, batch_num_test)
-                test_loss = loss_fn(predictions_test, predictions_test)
+        #     for batch_img_test, batch_num_test, batch_target_test in test_loader:
+        #         batch_img_test, batch_num_test, batch_target_test = (
+        #             batch_img_test.to(device),
+        #             batch_num_test.to(device),
+        #             batch_target_test.to(device),
+        #         )
+        #         predictions_test = model(batch_img_test, batch_num_test)
+        #         test_loss = loss_fn(predictions_test, predictions_test)
 
-                total_test_loss += test_loss.item()
+        #         total_test_loss += test_loss.item()
 
-            # Calculate average test loss and accuracy
-            average_test_loss = total_test_loss / len(test_loader)
-            test_hist.append(average_test_loss)
-        print(
-            f"Epoch [{epoch+1}/{n_epochs}] - Training Loss: {average_loss:.4f}, Test Loss: {average_test_loss:.4f}"
-        )
+        #     # Calculate average test loss and accuracy
+        #     average_test_loss = total_test_loss / len(test_loader)
+        #     test_hist.append(average_test_loss)
+        # print(
+        #     f"Epoch [{epoch+1}/{n_epochs}] - Training Loss: {average_loss:.4f}, Test Loss: {average_test_loss:.4f}"
+        # )
     return train_hist, test_hist
 
 
