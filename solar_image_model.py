@@ -12,6 +12,7 @@ from torch import optim
 from scipy.interpolate import CubicSpline
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm
 
 # Paths to data
 path_kp = "AppliedML-Final-Project/data_files/kp_data.txt"
@@ -210,7 +211,7 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
     test_hist = []
 
     # Training loop
-    for epoch in range(n_epochs):
+    for epoch in tqdm(range(n_epochs)):
         total_loss = 0.0
 
         # Training
@@ -229,7 +230,6 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
             optimizer.step()
 
             total_loss += loss.item()
-            print("Finished batch")
         # Calculate average training loss and accuracy
         average_loss = total_loss / len(train_loader)
         train_hist.append(average_loss)
