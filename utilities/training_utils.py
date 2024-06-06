@@ -64,9 +64,6 @@ def train_model(model, optimizer, loss_fn, train_loader, test_loader, device, n_
         if scheduler:
             scheduler.step()  # Step the scheduler at the end of each epoch
 
-        print(
-            f"Epoch [{epoch+1}/{n_epochs}] - Training Loss: {
-                train_loss:.4f}, Test Loss: {test_loss:.4f}"
-        )
+        print(f"Epoch [{epoch+1}/{n_epochs}] - Training Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}")
 
     return train_hist, test_hist
