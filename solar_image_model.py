@@ -238,7 +238,7 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
 
             for batch_img_test, batch_num_test, batch_target_test in test_loader:
                 predictions_test = model(batch_img_test, batch_num_test)
-                test_loss = loss_fn(predictions_test, predictions_test)
+                test_loss = loss_fn(predictions_test, batch_target_test)
 
                 total_test_loss += test_loss.item()
 
