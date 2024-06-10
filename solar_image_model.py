@@ -2,22 +2,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import os
+import io
 import torch
 from torchvision import transforms
 from torchvision.io import read_image
 from torch.utils.data import Dataset, DataLoader, Subset
 from torch import nn
-from torchvision.transforms.functional import convert_image_dtype
+from torchvision.transforms.functional import convert_image_dtype, pil_to_tensor
 from torch import optim
 from scipy.interpolate import CubicSpline
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
 
+import torchvision.transforms.functional as transform
+
+from concurrent.futures import ThreadPoolExecutor
+
 # Paths to data
-path_kp = "AppliedML-Final-Project/data_files/kp_data.txt"
-path_img_specs = "AppliedML-Final-Project/data_files/image_specs.csv"
-img_dir = "AppliedML-Final-Project/data_files/solar_images"
+path_kp = "data_files/kp_data.txt"
+path_img_specs = "data_files/image_specs.csv"
+img_dir = "data_files/solar_images"
 
 # Load kp data
 data_kp = pd.read_csv(path_kp)
@@ -76,57 +81,52 @@ def create_sequence(data, seq_length):
         sequences.append((feature, target))
     return sequences
 
-
 class ImageAndKpDataset(Dataset):
-    def __init__(self, sequences, img_dir, img_transform=None):
+    def __init__(self, sequences, img_dir, img_transform):
         self.sequences = sequences
         self.img_transform = img_transform
         self.img_dir = img_dir
 
     def __len__(self):
         return len(self.sequences)
+    
+    def read_and_transform_image(self, path):
+        return self.img_transform(read_image(path).cuda().float())
 
     def __getitem__(self, idx):
         features, target = self.sequences[idx]
-        images = []
-        numerical_features = []
-        for _, row in features.iterrows():
-            img_filename = row.pop("Image_filename")
-            img_path = os.path.join(self.img_dir, img_filename)
-            image = read_image(img_path)
-            image = convert_image_dtype(image, torch.float32)
-            if self.img_transform:
-                image = self.img_transform(image)
-            images.append(image)
-            numerical_features.append(row.values)
+        image_paths = [
+            os.path.join(self.img_dir, path)
+            for path in features["Image_filename"].values
+        ]
+        features = features.drop(columns=["Image_filename"])
+        numerical_features = torch.tensor(features.values, dtype=torch.float32).cuda()
+        target = torch.tensor(target, dtype=torch.float32).cuda().unsqueeze(-1)
+        with ThreadPoolExecutor() as executor:
+            images = list(executor.map(self.read_and_transform_image, image_paths))
         images = torch.stack(images)
-        numerical_features = torch.tensor(
-            np.array(numerical_features).astype(float), dtype=torch.float32
-        )
-        target = torch.tensor(target, dtype=torch.float32).unsqueeze(-1)
         return images, numerical_features, target
-
 
 seq_length = 7
 sequences = create_sequence(data_merged, seq_length)
-# img_transform = transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-img_transform = transforms.Compose([
-    transforms.Resize((512, 512)),
-    transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-])
+img_transform = transforms.Compose(
+    [
+        transforms.Resize((512, 512)),
+        transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+    ]
+)
 dataset = ImageAndKpDataset(sequences, img_dir, img_transform)
 
 # Split training data into training and validation data:
 full_len = len(dataset)
-# train_frac = 0.9
-train_frac = 0.005
+train_frac = 0.8
 train_size = int(full_len * train_frac)
 train_data = Subset(dataset, range(0, train_size))
 val_data = Subset(dataset, range(train_size, full_len))
-# batch_size = 1
-batch_size = 4
+batch_size = 8
 
 # Create PyTorch dataloaders for data:
+
 train_loader = DataLoader(train_data, batch_size=batch_size)
 test_loader = DataLoader(val_data, batch_size=batch_size)
 
@@ -136,29 +136,31 @@ class SolarImageKpModel(nn.Module):
         super().__init__()
 
         # CNN for the solar images
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(3, 8, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(8, 16, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(16, 32, kernel_size=3,
+                               stride=1, padding=1, bias=False)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        # self.fc1 = nn.Linear(128 * 128 * 128, 4)
-        self.fc1 = nn.Linear(64 * 64 * 128, 4)
+        self.fc1 = nn.Linear(64 * 64 * 32, 4)
 
         # RNN for the image data
         self.lstm_img = nn.LSTM(
-            input_size=4, hidden_size=128, num_layers=1, batch_first=True
+            input_size=4, hidden_size=32, num_layers=1, batch_first=True
         )
 
         # Fully-connected layers for the numerical data (8 input features)
         self.fc_num1 = nn.Linear(8, 16)
-        self.fc_num2 = nn.Linear(16, 128)
+        self.fc_num2 = nn.Linear(16, 32)
 
         # RNN for the numerical data
         self.lstm_num = nn.LSTM(
-            input_size=128, hidden_size=128, num_layers=1, batch_first=True
+            input_size=32, hidden_size=32, num_layers=1, batch_first=True
         )
 
         # Fully-connected layer that combines the image and numerical data to make the final prediction
-        self.fc_final = nn.Linear(256, 1)
+        self.fc_final = nn.Linear(64, 1)
 
     def forward(self, x_img, x_num):
         batch_size, seq_length, _, _, _ = x_img.size()
@@ -198,11 +200,11 @@ class SolarImageKpModel(nn.Module):
 
         return out
 
-n_epochs = 10
+n_epochs = 50
 loss_fn = nn.MSELoss(reduction="mean")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = SolarImageKpModel()
-optimizer = optim.Adam(model.parameters())
+optimizer = optim.Adam(model.parameters(), lr=5*10**(-4))
 model.to(device)
 
 
@@ -217,11 +219,6 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
         # Training
         model.train()
         for batch_img, batch_num, batch_target in train_loader:
-            batch_img, batch_num, batch_target = (
-                batch_img.to(device),
-                batch_num.to(device),
-                batch_target.to(device),
-            )
             predictions = model(batch_img, batch_num)
             loss = loss_fn(predictions, batch_target)
 
@@ -230,7 +227,7 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
             optimizer.step()
 
             total_loss += loss.item()
-        # Calculate average training loss and accuracy
+         #Calculate average training loss and accuracy
         average_loss = total_loss / len(train_loader)
         train_hist.append(average_loss)
 
@@ -240,11 +237,6 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
             total_test_loss = 0.0
 
             for batch_img_test, batch_num_test, batch_target_test in test_loader:
-                batch_img_test, batch_num_test, batch_target_test = (
-                    batch_img_test.to(device),
-                    batch_num_test.to(device),
-                    batch_target_test.to(device),
-                )
                 predictions_test = model(batch_img_test, batch_num_test)
                 test_loss = loss_fn(predictions_test, predictions_test)
 
@@ -256,9 +248,13 @@ def train_valid(n_epochs, model, optimizer, loss_fn, train_loader, test_loader, 
         print(
             f"Epoch [{epoch+1}/{n_epochs}] - Training Loss: {average_loss:.4f}, Test Loss: {average_test_loss:.4f}"
         )
+    torch.save(model, "data_files/image_model.pth")
     return train_hist, test_hist
 
 
 train_hist, test_hist = train_valid(
     n_epochs, model, optimizer, loss_fn, train_loader, test_loader, device
 )
+
+pd.Series(train_hist).to_csv("data_files/train_history.csv")
+pd.Series(test_hist).to_csv("data_files/test_history.csv")
